@@ -1,0 +1,263 @@
+---
+title: "HarvardX PH125.9x Data Science: Choose Your Own Project Submission"
+author: "Kai Yin Phyllis Lun"
+date: "3/7/2022"
+output: pdf_document
+---
+
+
+
+Executive summary
+====================
+The dataset for this Choose Your Own Project was taken from Kaggle (https://www.kaggle.com/kaushil268/disease-prediction-using-machine-learning), as shared by user KAUSHIL268. The data set was designed for machine learning practice to predict 42 prognoses from 132 symptoms. The training set contains 4920 observations while the testing set contains 42. The goal of this project is to design a machine learning algorithm that is able to predict prognoses accurately from a variety of symptoms. 
+
+Methods 
+===================
+I. Data import, cleaning, and exploration 
+--------------------------------
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(stringr)
+library(psych)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+library(rmarkdown)
+library(tinytex)
+
+train_disease<- read.csv("/Users/phyllislun/Dropbox/PL/harvardX/Harvardx R/Rebourn R/disease prediction/Training.csv")
+test_disease<- read.csv("/Users/phyllislun/Dropbox/PL/harvardX/Harvardx R/Rebourn R/disease prediction/Testing.csv")
+```
+
+
+# Data structure
+There are 4920 observations in the training set and 42 in the test set. Additionally there is a mismatch in terms of number of variables (column) in the test set (133) and in the training set (134).
+There are 134 variables in the training data set, among which 133 are the symptoms and 1 is the prognosis. For some reason there is also an empty variable (X). The variable X is not available in the testing data set. Therefore, I have removed the empty variable and make sure that the test set and training set have matching columns.
+
+```{r, echo=TRUE}
+dim(train_disease)
+dim(test_disease)
+
+which(names(train_disease)!=names(test_disease))
+names(train_disease)[134]
+summary(train_disease$X) 
+summary(test_disease$X) 
+
+train_disease<-train_disease %>% select(-X)
+```
+
+# Symptoms
+There are a total of 132 symptoms. Their names are extracted and processed from the variable names. The first 6 symptoms are displayed here.
+```{r}
+symptoms<-train_disease %>% select(-prognosis) %>% 
+  names() %>% str_replace_all("[^[:alnum:]]", " ")
+symptoms[symptoms=="fluid overload 1"]<-"fluid overload"
+head(symptoms)
+
+```
+
+
+Data visualization on the frequency of symptoms shows that the most frequently reported symptoms are fatigue, vomit, high fever, loss of appetite and neusea.The least frequently reported symptoms are pus filled pimples, blackheads, scurring, foul smell of urine and fluid overload. 
+
+```{r  fig.height = 14}
+#Data visualisation: 
+symptom.df<-train_disease%>% select(-prognosis) %>% 
+  summarise_all(sum) %>% t() %>% as.data.frame() %>% 
+  rename("frequency"="V1") 
+symptom.df<-cbind(symptoms,symptom.df)
+rownames(symptom.df)<-NULL
+symptom.df %>% ggplot(aes(x = reorder(symptoms,frequency), y=frequency)) + 
+  geom_bar(stat = "identity", size=1) + 
+  labs(title="Endorsement of symptoms",x="Symptoms", 
+       y="Frequency", face="bold")+
+  coord_flip () +
+  theme_classic()+ 
+  theme(axis.text=element_text(size=10), 
+        axis.title=element_text(size=12, face="bold"), 
+        plot.title = element_text(size=12, face="bold"),
+        )
+```
+
+Data visualization on the averaged number of symptoms by prognosis reveals that people with common cold, tuberculosis, dengue, hypothyroidism and hepatitis E reported the most symptoms (more than 10), while those with allergy, fungal infection, acne, AIDS, and gastroenteritis reported the least number of symptoms (about 3). 
+```{r   fig.height = 12, fig.width=8}
+symptom_no<-train_disease %>% select(-prognosis) %>%rowSums(.) 
+symptom.df.2<-as.data.frame(cbind(train_disease,symptom_no))
+symptom.df.2 %>% group_by(prognosis) %>% 
+  summarise(n=mean(symptom_no)) %>% arrange(desc(n)) %>% 
+  ggplot(aes(x=reorder(prognosis,n),y=n))+
+  geom_col() + 
+  coord_flip () +
+  theme_classic()+ 
+  labs(title="Averaged number of symptoms by prognoses",
+       x="Symptoms", y="Frequency", face="bold")+
+  theme(axis.text=element_text(size=12), 
+        axis.title=element_text(size=12, face="bold"), 
+        plot.title = element_text(size=14, face="bold"))
+  
+```
+
+# Prognoses
+In both the training and testing sets, there are 41 unique prognoses. In the training set, each distinct prognosis has 120 observations. Here I verify that the training set and test set have the same prognoses. 
+```{r}
+train_disease %>%  summarize(n_prognsis = n_distinct(prognosis)) 
+train_disease %>% count(prognosis, sort=TRUE)
+
+train_disease<-train_disease %>% mutate(prognosis=as.factor(prognosis))
+test_disease<-test_disease %>% mutate(prognosis=as.factor(prognosis))
+sum(levels(train_disease$prognosis)==levels(test_disease$prognosis))
+```
+
+
+
+Analyses
+===============================
+Since the prognosis is a categorical variable, only a limited types of machine learning models  (e.g., decision tree model and random forest model) are applicable. Accuracy is used as the criterion of model performance.  
+
+Here I set up the training set for training machine learning models.
+```{r}
+train_disease_y<-train_disease$prognosis
+train_disease_x <- train_disease %>% select(-prognosis)
+
+```
+# 1. Decision tree model
+In the decision tree model, the CP value is fine-tuned to improve the accuracy of the model.The best CP value selected from boostrapping is 0.001005025. In the final model, it is found that mild fever, headache, sweating,yellowing of eyes, and muscle weakness were the most important features. 
+
+```{r echo=TRUE}
+set.seed(3, sample.kind = "Rounding")
+fit_rpart <- train(prognosis ~ .,
+                    method = "rpart",
+                    tuneGrid = 
+                     data.frame(cp = seq(0.0, 0.1, len = 200)),
+                    data = train_disease)
+fit_rpart$bestTune
+fit_rpart$finalModel$variable.importance[1:5]
+```
+
+Plot of the CP parameter 
+```{r}
+#plotting the cp parameter tuning 
+plot(fit_rpart)
+```
+
+After fitting the model with the test data, the model reaches an accuracy of 0.88.
+```{r, echo=TRUE}
+y_hat <- predict(fit_rpart, test_disease)
+dt_accuracy<-confusionMatrix(
+  y_hat,as.factor(test_disease$prognosis))$overall["Accuracy"] 
+
+disease_results <- tibble(method = "Decision tree", 
+                          accuracy = dt_accuracy)
+```
+
+# 2. Random forest model
+The second machine learning model fitted is the random forest model. From the default setting, a total of 500 trees are planted and 11 features are selected as predictors each time.
+```{r, echo=FALSE}
+library(randomForest)
+```
+
+```{r, echo=TRUE}
+set.seed(3, sample.kind = "Rounding")
+rt_fit <- randomForest(prognosis ~ ., data = train_disease)
+rt_fit$ntree #500
+rt_fit$mtry #11
+
+
+```
+
+Feature importance plot of the random forest model
+```{r  fig.align='left', fig.width=8, fig.height=8}
+varImpPlot(rt_fit, main="Feature importance of the 
+           prognosis prediction model", cex=0.9) 
+ 
+```
+
+
+After fitting the random forest model with the test data, the model reaches an accuracy of 0.98.
+```{r, echo=TRUE}
+#accuracy in the test set
+y_hat <- predict(rt_fit, test_disease)
+rf_accuracy<-confusionMatrix(y_hat, 
+                             as.factor(test_disease$prognosis))$overall["Accuracy"] 
+rf_accuracy
+disease_results <-bind_rows(disease_results, 
+                            data.frame(method="Random forest model 1", 
+                                       accuracy=rf_accuracy))
+
+
+```
+
+# 3. Fine-tuned random forest model 
+In this new version of the random forest model, I have used 5-fold cross-validation (sampling 20% of the training-set observations) to determine the best models from varying number of split nodes and predictors used. 
+```{r, echo=TRUE}
+library(Rborist)
+train_disease_x<-train_disease%>% select(-prognosis)
+train_disease_y<-train_disease%>% select(prognosis) %>% 
+  pull(.)%>% as.factor()
+
+
+set.seed(3, sample.kind = "Rounding")
+control <- trainControl(method="cv", number = 5, p = 0.2) 
+grid <- expand.grid(minNode=c(2,3,4,5),  predFixed =seq(2:10))
+train_rf <-  train(train_disease_x, 
+                   train_disease_y, 
+                   method = "Rborist", 
+                   nTree = 500,
+                   trControl = control,
+                   tuneGrid = grid)
+
+train_rf
+```
+Similar to the prior random forest model, 500 trees are planted in this version. According to the cross-validation results of the model, the most optimal model uses two predictors and  2 observations. 
+```{r  fig.width=8, fig.align='left'}
+ggplot(train_rf)+ 
+  labs(title = "Accurancy of random forest model with different number of predictors, 
+       stratified by minimal number of nobes")+
+  theme_classic()+ 
+  scale_x_continuous("Number of randomly selected predictors") +
+  theme(axis.text=element_text(size=12), 
+        axis.title=element_text(size=12, face="bold"), 
+        plot.title = element_text(size=12, face="bold"))
+
+train_rf$finalModel$param
+
+```
+
+The 5 most important variables are headache, vomiting, stiff neck, yellowing of eyes, and abdominal pain. The only important feature shared by the two random forest models is the yellowing of eyes.
+```{r, echo=TRUE}
+varImp(train_rf)
+```
+
+The fine-tuned random forest model reaches an accuracy of 0.98.
+```{r, echo=TRUE}
+y_hat <- predict(train_rf, test_disease)
+rf_tuned_accuracy<-confusionMatrix(y_hat, 
+                                   as.factor(test_disease$prognosis))$
+  overall["Accuracy"] #0.9761905
+rf_tuned_accuracy
+disease_results <-bind_rows(disease_results, 
+                            data.frame(method="Random forest model 2", 
+                                       accuracy=rf_tuned_accuracy))
+
+```
+
+Conclusion
+==============
+In this self-selected project, I trained several decision tree and random forest models to predict diseases prognoses from a variety of symptoms. The data set, as obtained from Kaggle, contained 132 symptoms and the 42 corresponding prognoses. Both the decision tree and random forest models achieved fairly high accuracy (range: 0.88-0.98). In comparison, both random forest models (default and fine-tuned) have the highest accuracy of 0.98. The fine-tuning did not improve the performance of the random forest model.
+```{r, echo=FALSE}
+disease_results %>% knitr::kable()
+```
+
+
+
+Limitations
+-------------
+There are several limitations to this project. Firstly, there was only one observation of each observation (except for Fungal infection, which has 2 observations) in the test set. The lack of variations in features for each prognosis might have limited the generalizability of the accuracy calculated from the current test set. On a similar note, each prognosis has 120 observations in the training set. The training data set, as well as the machine learning models, would be benefited from some variability in the number of observations for each prognosis, such as prevalence of prognoses in a hospital or primary care setting. The inclusion of such data would have greatly improved the machine learning model and increased utility of the machine learning model. The small size of the training set have also limited the bootstrapping and cross-validation procedures. Also, the model performance would also be greatly enhanced if patient data such as sociodemographic variables and specific medical history (other than the family history that was vaguely stated as a symptom in the current data sets) are available. 
+
+Future work and implications
+-------------------
+Despite the limitations in the data sets, the strong performance of the final model has given me confidence that the model could readily predict diseases based on the given set of symptoms. As a proof of concept, the current model would be a good first step to develop a machine learning model for medical diagnostics. It would be interesting to continue developing the model based on real-world hospital records (which would have addressed the limitations stated above), rendering the model more flexible and adaptive to patient-level characteristics and more powerful for handling a wider variety of symptoms and prognoses. 
+
+
